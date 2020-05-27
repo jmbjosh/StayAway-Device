@@ -1,0 +1,206 @@
+//libaries
+#include <Wire.h>
+#include <Adafruit_MLX90614.h>
+#include <NewPing.h>
+#include <TimerFreeTone.h>
+#include <Arduino.h>
+#include <U8g2lib.h>
+
+#ifdef U8X8_HAVE_HW_SPI
+#include <SPI.h>
+#endif
+#ifdef U8X8_HAVE_HW_I2C
+#include <Wire.h>
+#endif
+
+//mesurments 
+float distance = 0;   float ambientTemp = 0;    float objectTemp = 0;
+
+//timer
+long timer = 0;   long seconds = 0;
+int lightSpeed = 50;
+long timerTone = 0;
+
+//pins
+#define din 12  // led matrix
+#define cs 10 
+#define clk 11  
+  
+#define TRIGGER_PIN  7// ultasound 
+#define ECHO_PIN 6  
+#define  MAX_DISTANCE 200 // ultasound max distance
+
+#define buzzPin 2    // buzzer
+
+
+
+//temp avg
+float tempData[10]; // stores temp data
+int putData = 0; // pointer
+float tempAvg = 0; // avg of temps
+float tempOld = 0; // pervious temp
+
+// senseativity
+float tempSense = 2; // temp sensitivity    ******** CHANGE FOR SENSITIVITY **********
+float range = 100; // (in cm) triger distance     ******** CHANGE FOR SENSITIVITY **********
+int measurmentSpeed = 1000;  //1000 = 1sec, 500= .5 sec, 100 = .1sec      ****** CHANGE FOR SENSITIVITY ******
+
+
+//state
+int human = 0; // no human = 0 
+
+//declare
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
+Adafruit_MLX90614 mlx = Adafruit_MLX90614();
+U8G2_MAX7219_8X8_F_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ 11, /* data=*/ 12, /* cs=*/ 10, /* dc=*/ U8X8_PIN_NONE, /* reset=*/ U8X8_PIN_NONE);
+
+void setup() {
+  Serial.begin(9600);  
+  mlx.begin();  
+  clearData();
+  firstTemp();
+
+  u8g2.begin();
+  u8g2.clearBuffer();
+}
+
+void loop() {
+  takeMeasurments(); // take measurments
+  if (checkTempChange() == true && checkDistance() == true){ // test to see if person is in range
+    human = 1;
+    Serial.println("HUMAN DETECTED");
+  }
+  
+  if (checkTempChange() == false && checkDistance() == false){ // test to see if one one is in range
+    human = 0;
+    Serial.println("CLEAR");
+  }
+
+  switch (human) { // if person is in range
+    case 1:
+      stayAway();
+      break;
+    default:
+      safe();
+      break;
+  }
+
+  
+  Serial.print("After "); Serial.print(seconds); Serial.println(" second:");
+  Serial.print("temp Reading: "); Serial.println( mlx.readObjectTempF());
+  Serial.print("average temp: "); Serial.println(tempAvg);
+  Serial.print("Distance: "); Serial.println(distance);
+  Serial.println();
+  delay (500);
+
+ 
+}
+
+void firstTemp(){ // fill array at start **DO ONCE**
+  float tempUp = 0;
+  for(int i=0; i<= 10; i++){
+    tempData[putData] = mlx.readObjectTempF(); // read data and store in array
+    putData = (putData + 1) % 10; // pointer, store in array FIFO
+  }
+  for (int i=0; i<10; i++){
+    tempUp = tempUp + tempData[i]; // add up all temps
+  }
+  tempOld = tempUp/10; // take average
+}
+
+void takeMeasurments(){
+  if ((millis() >= timer)) { // 1 sec timer
+      timer = timer + measurmentSpeed; // speed at mesurments are taken
+      seconds++;
+      for (int i=0; i<10; i++){
+        infraRed(); // read infrared 10 times every 1sec
+      }
+      ultaSound(); // read ultrasound every 1sec
+  }
+  return;
+}
+
+void infraRed(){ // read IR data
+  tempData[putData] = mlx.readObjectTempF(); // read data and store in array
+  putData = (putData + 1) % 10; // pointer, store in array FIFO
+  averageTemp(); // add a value, take the average
+  return;
+}
+
+void averageTemp(){ // avg temp reading
+  float tempUp = 0;
+  for (int i=0; i<10; i++){
+    tempUp = tempUp + tempData[i]; // add up temps
+   // Serial.println(tempData[i]);
+   //Serial.println(i);
+  }
+  
+  tempAvg = tempUp/10; // divide by 10, get average
+  return;
+}
+
+long ultaSound(){
+  distance = sonar.ping_cm();
+  return;
+}
+
+void stayAway(){
+  lights();
+  buzz();
+  Serial.println("TOO CLOSE");
+  Serial.println("");
+  return;
+}
+
+void safe(){
+  u8g2.clearBuffer();
+  u8g2.sendBuffer();
+  return;
+}
+
+void clearData(){
+  distance = 0.0;
+  for (int i=0; i<10; i++){
+    tempData[i] = 0.0;
+  }
+  Serial.println("Data Cleared");
+  return;
+}
+
+bool checkTempChange(){ // check if temp has changed
+ if(tempAvg > (tempOld + tempSense) || (tempAvg < (tempOld - tempSense))){// if new temp is different then old temp by + 1 then change state.
+    tempOld = tempAvg;
+    Serial.println("HEAT CHANGE DETECTED");
+    Serial.println();
+    return true;  
+  }
+  else{
+    return false;
+  }
+}
+
+bool checkDistance(){ // check to see if in range
+  if (distance < range){
+    return true;  
+    Serial.println("IN RANGE");
+  }
+  else{
+    return false;
+  }
+}
+
+void lights(){
+ u8g2.clearBuffer();
+  for (int i = 0; i < 8; i++){
+    u8g2.drawVLine(i,0,8);
+    u8g2.sendBuffer();
+    delay(lightSpeed);
+ } 
+}  
+
+void buzz(){
+  if ((millis() >= timerTone)) {
+      timerTone = timerTone + 1000;
+      TimerFreeTone(buzzPin, 627.27, 100);
+  }
+}
